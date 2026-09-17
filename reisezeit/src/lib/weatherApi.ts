@@ -1,0 +1,8 @@
+export type ClimatePoint={continent:string;temperature:number;precipitation:number;rainDays:number;sunshine:number;source:string};
+// Continent-level weather is deliberately represented by a small climate reference model.
+// Coordinates are fixed, documented climate anchors rather than a claim about every destination.
+const anchors:Record<string,[number,number]>={Europa:[48.8566,2.3522],Asien:[35.6762,139.6503],Afrika:[-1.2921,36.8219],Nordamerika:[34.0522,-118.2437],Südamerika:[-23.5505,-46.6333],Ozeanien:[-33.8688,151.2093]};
+export async function fetchClimateForPoint(continent:string):Promise<ClimatePoint|null>{
+ const coords=anchors[continent];if(!coords)return null;const [lat,lon]=coords;const url=`https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}&start_date=1991-01-01&end_date=2020-12-31&daily=temperature_2m_mean,precipitation_sum,sunshine_duration&timezone=auto`;
+ try{const r=await fetch(url);if(!r.ok)return null;const d=await r.json();const t=d.daily?.temperature_2m_mean?.filter((x:number|null)=>x!=null)??[];const p=d.daily?.precipitation_sum?.filter((x:number|null)=>x!=null)??[];const s=d.daily?.sunshine_duration?.filter((x:number|null)=>x!=null)??[];if(!t.length)return null;const rainDays=p.filter((x:number)=>x>=1).length/30;return {continent,temperature:t.reduce((a:number,b:number)=>a+b,0)/t.length,precipitation:p.reduce((a:number,b:number)=>a+b,0)/p.length,rainDays,sunshine:s.length?s.reduce((a:number,b:number)=>a+b,0)/s.length/3600:0,source:'Open-Meteo / ERA5 Reanalyse 1991–2020, Referenzpunkt '+lat+','+lon};}catch{return null}}
+export {anchors};
