@@ -108,6 +108,40 @@ function heatClass(v:number|null){if(v==null)return'heat-none text-slate-500';if
 function Details({result,date}:{result:ScoreResult,date:string}){return <div className="mt-4 border-t border-slate-100 pt-4"><div className="grid grid-cols-3 gap-2"><Metric label="Reisezeit" value={result.overall}/><Metric label="Menschen" value={result.crowd}/><Metric label="Wetter" value={result.weather}/></div><div className="mt-4"><p className="mb-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Gründe</p><ul className="space-y-1.5 text-sm">{result.reasons.map((r,i)=><li key={i} className="flex gap-2"><span>{r.kind==='positive'?'✓':'•'}</span><span>{r.text}</span></li>)}</ul></div>{result.missing.length>0&&<p className="mt-3 rounded-lg bg-slate-50 p-2 text-xs text-slate-500">Keine Daten: {result.missing.join(', ')}.</p>}</div>}
 function Metric({label,value}:{label:string,value:number|null}){return <div className="rounded-xl bg-slate-50 p-2"><div className="text-[10px] uppercase tracking-wide text-slate-500">{label}</div><div className="mt-1 text-lg font-semibold">{value==null?'—':Math.round(value)}</div></div>}
 function shortRange(a:string,b:string){const fa=new Intl.DateTimeFormat('de-DE',{day:'2-digit',month:'2-digit',timeZone:'UTC'}).format(new Date(a+'T12:00:00Z'));const fb=new Intl.DateTimeFormat('de-DE',{day:'2-digit',month:'2-digit',year:'numeric',timeZone:'UTC'}).format(new Date(b+'T12:00:00Z'));return `${fa}–${fb}`}
-function findBestRanges(dates:string[],duration:number,scoreFor:(d:string)=>ScoreResult){const out:{start:string,end:string,score:number,dates:string[]}[]=[];for(let i=0;i<=dates.length-duration;i++){const ds=dates.slice(i,i+duration);const vals=ds.map(d=>scoreFor(d).overall);if(vals.some(v=>v==null))continue;out.push({start:ds[0],end:ds.at(-1)!,score:vals.reduce((a,b)=>a+(b??0),0)/duration,dates:ds})}return out.sort((a,b)=>b.score-a.score).filter((r,i,arr)=>arr.slice(0,i).every(x=>!overlap(r.dates,x.dates))).slice(0,10)}
+function findBestRanges(
+  dates: string[],
+  duration: number,
+  scoreFor: (d: string) => ScoreResult
+) {
+  const out: {
+    start: string;
+    end: string;
+    score: number;
+    dates: string[];
+  }[] = [];
+
+  for (let i = 0; i <= dates.length - duration; i++) {
+    const ds = dates.slice(i, i + duration);
+    const nums = ds
+      .map((d) => scoreFor(d).overall)
+      .filter((v): v is number => v != null);
+
+    if (nums.length !== duration) continue;
+
+    out.push({
+      start: ds[0],
+      end: ds[ds.length - 1],
+      score: nums.reduce((a, b) => a + b, 0) / duration,
+      dates: ds,
+    });
+  }
+
+  return out
+    .sort((a, b) => b.score - a.score)
+    .filter((r, i, arr) =>
+      arr.slice(0, i).every((x) => !overlap(r.dates, x.dates))
+    )
+    .slice(0, 10);
+}
 function overlap(a:string[],b:string[]){return a.some(x=>b.includes(x))}
 createRoot(document.getElementById('root')!).render(<App/>);
