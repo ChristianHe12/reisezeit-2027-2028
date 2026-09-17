@@ -22,14 +22,14 @@ function fmt(date:string){return new Intl.DateTimeFormat('de-CH',{weekday:'long'
 
 function App(){
  const [year,setYear]=React.useState<2027|2028>(2027);
- const [deStates,setDeStates]=React.useState<string[]>(['Bayern','Baden-Württemberg']);
- const [chCantons,setChCantons]=React.useState<string[]>([]);
- const [countries,setCountries]=React.useState<CountryCode[]>([]);
+ const [deStates,setDeStates]=React.useState<string[]>(DE_STATES);
+ const [chCantons,setChCantons]=React.useState<string[]>(CH_CANTONS);
+ const [countries,setCountries]=React.useState<CountryCode[]>(COUNTRIES.map(c=>c.code));
  const [weatherOn,setWeatherOn]=React.useState(true);
  const [holidaysOn,setHolidaysOn]=React.useState(true);
  const [germanOn,setGermanOn]=React.useState(true);
  const [swissOn,setSwissOn]=React.useState(true);
- const [otherOn,setOtherOn]=React.useState(false);
+ const [otherOn,setOtherOn]=React.useState(true);
  const [continent,setContinent]=React.useState('Europa');
  const [peopleWeight,setPeopleWeight]=React.useState(50);
  const [duration,setDuration]=React.useState(10);
