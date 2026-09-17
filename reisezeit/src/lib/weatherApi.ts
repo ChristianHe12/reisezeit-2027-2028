@@ -1,8 +1,44 @@
-export type ClimatePoint={continent:string;temperature:number;precipitation:number;rainDays:number;sunshine:number;source:string};
-// Continent-level weather is deliberately represented by a small climate reference model.
-// Coordinates are fixed, documented climate anchors rather than a claim about every destination.
-const anchors:Record<string,[number,number]>={Europa:[48.8566,2.3522],Asien:[35.6762,139.6503],Afrika:[-1.2921,36.8219],Nordamerika:[34.0522,-118.2437],Südamerika:[-23.5505,-46.6333],Ozeanien:[-33.8688,151.2093]};
-export async function fetchClimateForPoint(continent:string):Promise<ClimatePoint|null>{
- const coords=anchors[continent];if(!coords)return null;const [lat,lon]=coords;const url=`https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}&start_date=1991-01-01&end_date=2020-12-31&daily=temperature_2m_mean,precipitation_sum,sunshine_duration&timezone=auto`;
- try{const r=await fetch(url);if(!r.ok)return null;const d=await r.json();const t=d.daily?.temperature_2m_mean?.filter((x:number|null)=>x!=null)??[];const p=d.daily?.precipitation_sum?.filter((x:number|null)=>x!=null)??[];const s=d.daily?.sunshine_duration?.filter((x:number|null)=>x!=null)??[];if(!t.length)return null;const rainDays=p.filter((x:number)=>x>=1).length/30;return {continent,temperature:t.reduce((a:number,b:number)=>a+b,0)/t.length,precipitation:p.reduce((a:number,b:number)=>a+b,0)/p.length,rainDays,sunshine:s.length?s.reduce((a:number,b:number)=>a+b,0)/s.length/3600:0,source:'Open-Meteo / ERA5 Reanalyse 1991–2020, Referenzpunkt '+lat+','+lon};}catch{return null}}
-export {anchors};
+export type MonthlyClimate = { temperature: number; precipitation: number; sunshine: number }; // sunshine in h/Tag
+export type ClimateNormals = { lat: number; lon: number; months: MonthlyClimate[]; source: string }; // months[0] = Januar
+
+// Klimareferenz je Zielland: monatliche Normalwerte 1991-2020 (Open-Meteo/ERA5) an einer
+// dokumentierten Referenzkoordinate. Ersetzt das alte Kontinent-Modell (ein einziger Punkt für
+// ganz Asien/Europa/...) durch eine Koordinate je gewähltem Reiseziel – siehe README-Hinweis
+// zur nächsten Ausbaustufe. Ergebnis wird pro Koordinate im Browser gecacht.
+export async function fetchMonthlyClimate(lat: number, lon: number): Promise<ClimateNormals | null> {
+  const key = `climate-normals-${lat.toFixed(2)}-${lon.toFixed(2)}`;
+  const cached = localStorage.getItem(key);
+  if (cached) return JSON.parse(cached);
+  const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}&start_date=1991-01-01&end_date=2020-12-31&daily=temperature_2m_mean,precipitation_sum,sunshine_duration&timezone=UTC`;
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const d = await r.json();
+    const dates: string[] = d.daily?.time ?? [];
+    const t: (number | null)[] = d.daily?.temperature_2m_mean ?? [];
+    const p: (number | null)[] = d.daily?.precipitation_sum ?? [];
+    const s: (number | null)[] = d.daily?.sunshine_duration ?? [];
+    if (!dates.length) return null;
+    const months: MonthlyClimate[] = Array.from({ length: 12 }, () => ({ temperature: 0, precipitation: 0, sunshine: 0 }));
+    const counts = Array.from({ length: 12 }, () => 0);
+    for (let i = 0; i < dates.length; i++) {
+      if (t[i] == null) continue;
+      const m = Number(dates[i].slice(5, 7)) - 1;
+      months[m].temperature += t[i] as number;
+      months[m].precipitation += p[i] ?? 0;
+      months[m].sunshine += (s[i] ?? 0) / 3600;
+      counts[m]++;
+    }
+    for (let m = 0; m < 12; m++) {
+      if (counts[m] === 0) continue;
+      months[m].temperature /= counts[m];
+      months[m].precipitation = months[m].precipitation / counts[m] * 30; // ~monatliche Summe
+      months[m].sunshine /= counts[m];
+    }
+    const result: ClimateNormals = { lat, lon, months, source: `Open-Meteo / ERA5 Reanalyse 1991–2020, ${lat.toFixed(2)},${lon.toFixed(2)}` };
+    localStorage.setItem(key, JSON.stringify(result));
+    return result;
+  } catch {
+    return null;
+  }
+}
