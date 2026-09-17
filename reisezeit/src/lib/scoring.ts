@@ -3,16 +3,16 @@ import type {RawHoliday} from './holidayApi';
 import type {ClimateNormals} from './weatherApi';
 import type {SchoolHoliday} from './schoolHolidayApi';
 import type {germanSchoolHolidays} from '../data/germany';
-import {DESTINATION_BY_CODE} from '../data/destinations';
+import {DESTINATION_BY_CODE, type Category} from '../data/destinations';
 import {TRAVEL_MARKETS, DE_TRAVEL_WEIGHT, CH_TRAVEL_WEIGHT} from '../data/travelMarkets';
 
 export type Preferences={
   year:number;deStates:string[];chCantons:string[];countries:CountryCode[];
   germanOn:boolean;swissOn:boolean;otherOn:boolean;weatherOn:boolean;holidaysOn:boolean;
-  peopleWeight:number;destination:string;
+  peopleWeight:number;destination:string;categories:Category[];
 };
 export type ScoreResult={overall:number|null;crowd:number|null;weather:number|null;holiday:number|null;reasons:{kind:'positive'|'negative';text:string}[];missing:string[]};
-type Inputs={germanSchoolHolidays:Record<string,{start:string;end:string;name:string}[]>;holidayData:RawHoliday[];climate:ClimateNormals|null;schoolHolidayData:SchoolHoliday[]};
+type Inputs={germanSchoolHolidays:Record<string,{start:string;end:string;name:string}[]>;holidayData:RawHoliday[];climate:ClimateNormals|null;seaTemp:number[]|null;schoolHolidayData:SchoolHoliday[]};
 
 const dateIn=(d:string,s:string,e:string)=>d>=s&&d<=e;
 const monthOf=(date:string)=>Number(date.slice(5,7));
@@ -61,14 +61,21 @@ function originDemand(date:string,p:Preferences,data:Inputs):{value:number|null;
   const activeMarkets=parts.filter(x=>x.value>=50).map(x=>x.name);
   return {value,activeMarkets};
 }
-function weatherScoreFor(date:string,climate:ClimateNormals|null):number|null{
-  if(!climate)return null;
+function seaComfort(temp:number):number{return Math.max(0,Math.min(100,(temp-17)*12.5))}
+function weatherScoreFor(date:string,climate:ClimateNormals|null,seaTemp:number[]|null,wantsBeach:boolean):{score:number|null;seaC:number|null}{
+  if(!climate)return {score:null,seaC:null};
   const m=climate.months[monthOf(date)-1];
-  if(!m)return null;
+  if(!m)return {score:null,seaC:null};
   const tempSuit=100-Math.min(100,Math.abs(m.temperature-24)*4);
   const precipPenalty=Math.min(50,m.precipitation/6);
   const sunshineBonus=Math.min(30,m.sunshine*3);
-  return Math.max(0,Math.min(100,tempSuit-precipPenalty+sunshineBonus));
+  const airScore=Math.max(0,Math.min(100,tempSuit-precipPenalty+sunshineBonus));
+  if(!wantsBeach||!seaTemp)return {score:airScore,seaC:null};
+  const seaC=seaComfort(seaTemp[monthOf(date)-1]);
+  // Zum Baden muss BEIDES stimmen: kaltes Meer darf nicht durch sonniges/trockenes Wetter überdeckt werden.
+  let combined=airScore*0.4+seaC*0.6;
+  if(seaC<50)combined=Math.min(combined,seaC+10);
+  return {score:Math.max(0,Math.min(100,combined)),seaC};
 }
 
 export function calculateTravelScore(date:string,p:Preferences,data:Inputs):ScoreResult{
@@ -100,12 +107,15 @@ export function calculateTravelScore(date:string,p:Preferences,data:Inputs):Scor
   }
 
   let weather:number|null=null;
+  const wantsBeach=p.categories.includes('beach');
   if(p.weatherOn){
     if(!destination)missing.push('Wetter (kein Reiseziel gewählt)');
     else{
-      weather=weatherScoreFor(date,data.climate);
+      const w=weatherScoreFor(date,data.climate,data.seaTemp,wantsBeach);
+      weather=w.score;
       if(weather==null)missing.push(`Wetter (${destination.name})`);
-      else if(weather>=70)reasons.push({kind:'positive',text:`Günstiges Klima in ${destination.name} für den Referenzpunkt`});
+      else if(wantsBeach&&w.seaC!=null&&w.seaC<50)reasons.push({kind:'negative',text:`Meerestemperatur in ${destination.name} in diesem Monat zu kühl zum Baden`});
+      else if(weather>=70)reasons.push({kind:'positive',text:`Günstiges Klima in ${destination.name}${wantsBeach?' inkl. angenehmer Wassertemperatur':''} für den Referenzpunkt`});
       else reasons.push({kind:'negative',text:`Klima in ${destination.name} außerhalb des bevorzugten Bereichs`});
     }
   }

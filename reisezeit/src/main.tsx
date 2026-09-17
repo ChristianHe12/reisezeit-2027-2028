@@ -4,11 +4,11 @@ import { ChevronDown, ChevronUp, Info, SlidersHorizontal, X } from 'lucide-react
 import './index.css';
 import { germanSchoolHolidays } from './data/germany';
 import { COUNTRIES, type CountryCode } from './data/countries';
-import { DESTINATIONS, DESTINATION_BY_CODE, type Destination } from './data/destinations';
+import { DESTINATIONS, DESTINATION_BY_CODE, CATEGORIES, type Destination, type Category } from './data/destinations';
 import { calculateTravelScore, type Preferences, type ScoreResult } from './lib/scoring';
 import { fetchHolidayData } from './lib/holidayApi';
 import { fetchSchoolHolidays, type SchoolHoliday } from './lib/schoolHolidayApi';
-import { fetchMonthlyClimate, type ClimateNormals } from './lib/weatherApi';
+import { fetchMonthlyClimate, fetchMonthlySeaTemperature, type ClimateNormals } from './lib/weatherApi';
 
 const years=[2027,2028] as const;
 const months=Array.from({length:12},(_,i)=>i);
@@ -38,6 +38,8 @@ function App(){
  const [swissOn,setSwissOn]=React.useState(true);
  const [otherOn,setOtherOn]=React.useState(true);
  const [destination,setDestination]=React.useState('ES');
+ const [categories,setCategories]=React.useState<Category[]>([]);
+ const [seaTemp,setSeaTemp]=React.useState<number[]|null>(null);
  const [peopleWeight,setPeopleWeight]=React.useState(50);
  const [duration,setDuration]=React.useState(7);
  const [startWeekday,setStartWeekday]=React.useState<'any'|number>(1);
@@ -55,40 +57,52 @@ function App(){
 
  const isRecommendMode=destination==='';
  const activeDestination=DESTINATION_BY_CODE[destination]||null;
- const prefs:Preferences={year, deStates, chCantons, countries, germanOn, swissOn, otherOn, weatherOn, holidaysOn, peopleWeight, destination};
+ const wantsBeach=categories.includes('beach');
+ const matchesCategories=(d:Destination)=>categories.every(c=>d.categories.includes(c));
+ const eligibleDestinations=React.useMemo(()=>categories.length?DESTINATIONS.filter(matchesCategories):DESTINATIONS,[categories.join(',')]);
+ const prefs:Preferences={year, deStates, chCantons, countries, germanOn, swissOn, otherOn, weatherOn, holidaysOn, peopleWeight, destination, categories};
  React.useEffect(()=>{setSelectedDate(iso(year,4,15));setRange([]);setCountryRecs([])},[year]);
+ React.useEffect(()=>{if(destination&&!eligibleDestinations.some(d=>d.code===destination))setDestination('')},[eligibleDestinations]);
  React.useEffect(()=>{
    let alive=true; setLoading(true); setError(null);
+   const beachSpot=activeDestination?(activeDestination.beachSpot||{lat:activeDestination.lat,lon:activeDestination.lon}):null;
    Promise.all([
      fetchHolidayData(year).catch(()=>[]),
      activeDestination?fetchMonthlyClimate(activeDestination.lat,activeDestination.lon).catch(()=>null):Promise.resolve(null),
+     wantsBeach&&beachSpot?fetchMonthlySeaTemperature(beachSpot.lat,beachSpot.lon).catch(()=>null):Promise.resolve(null),
      fetchSchoolHolidays('CH',year).catch(()=>[]),
      ...(otherOn ? countries.map(c=>fetchSchoolHolidays(c,year).catch(()=>[])) : [])
-   ]).then(([h,c,ch,...others])=>{if(alive){setHolidayData(h);setClimate(c);setSchoolHolidayData([...(ch as SchoolHoliday[]), ...(others as SchoolHoliday[][]).flat()])}}).catch(()=>alive&&setError('Externe Daten konnten nicht geladen werden. Die betroffenen Faktoren werden als „keine Daten“ behandelt.')).finally(()=>alive&&setLoading(false));
+   ]).then(([h,c,st,ch,...others])=>{if(alive){setHolidayData(h);setClimate(c);setSeaTemp(st as number[]|null);setSchoolHolidayData([...(ch as SchoolHoliday[]), ...(others as SchoolHoliday[][]).flat()])}}).catch(()=>alive&&setError('Externe Daten konnten nicht geladen werden. Die betroffenen Faktoren werden als „keine Daten“ behandelt.')).finally(()=>alive&&setLoading(false));
    return()=>{alive=false};
- },[year,destination,otherOn,countries.join(',')]);
+ },[year,destination,otherOn,countries.join(','),wantsBeach]);
 
- const scoreFor=(date:string):ScoreResult=>calculateTravelScore(date,prefs,{germanSchoolHolidays,holidayData,climate,schoolHolidayData});
+ const scoreFor=(date:string):ScoreResult=>calculateTravelScore(date,prefs,{germanSchoolHolidays,holidayData,climate,seaTemp,schoolHolidayData});
  const dateList=React.useMemo(()=>{const out:string[]=[]; for(let m=0;m<12;m++)for(let d=1;d<=daysInMonth(year,m);d++)out.push(iso(year,m,d)); return out},[year]);
- const bestRanges=React.useMemo(()=>findBestRanges(dateList,duration,startWeekday,scoreFor),[dateList,duration,startWeekday,peopleWeight,climate,holidayData,deStates,chCantons,countries,germanOn,swissOn,otherOn,weatherOn,holidaysOn,destination]);
+ const bestRanges=React.useMemo(()=>findBestRanges(dateList,duration,startWeekday,scoreFor),[dateList,duration,startWeekday,peopleWeight,climate,seaTemp,holidayData,deStates,chCantons,countries,germanOn,swissOn,otherOn,weatherOn,holidaysOn,destination,categories.join(',')]);
  const selected=scoreFor(selectedDate);
 
  async function computeCountryRecommendations(){
    setRecsLoading(true); setRecsProgress(0); setCountryRecs([]);
+   const pool=eligibleDestinations;
    const results:CountryRecommendation[]=[];
    const batchSize=6;
-   for(let i=0;i<DESTINATIONS.length;i+=batchSize){
-     const batch=DESTINATIONS.slice(i,i+batchSize);
+   for(let i=0;i<pool.length;i+=batchSize){
+     const batch=pool.slice(i,i+batchSize);
      const climates=await Promise.all(batch.map(d=>fetchMonthlyClimate(d.lat,d.lon).catch(()=>null)));
+     const seaTemps=await Promise.all(batch.map(d=>{
+       if(!wantsBeach)return Promise.resolve(null);
+       const spot=d.beachSpot||{lat:d.lat,lon:d.lon};
+       return fetchMonthlySeaTemperature(spot.lat,spot.lon).catch(()=>null);
+     }));
      for(let j=0;j<batch.length;j++){
        const dest=batch[j];
        const destClimate=climates[j];
        const destPrefs:Preferences={...prefs,destination:dest.code};
-       const destScoreFor=(date:string)=>calculateTravelScore(date,destPrefs,{germanSchoolHolidays,holidayData,climate:destClimate,schoolHolidayData});
+       const destScoreFor=(date:string)=>calculateTravelScore(date,destPrefs,{germanSchoolHolidays,holidayData,climate:destClimate,seaTemp:seaTemps[j],schoolHolidayData});
        const ranges=findBestRanges(dateList,duration,startWeekday,destScoreFor,1);
        if(ranges[0])results.push({...ranges[0],destination:dest});
      }
-     setRecsProgress(Math.min(DESTINATIONS.length,i+batchSize));
+     setRecsProgress(Math.min(pool.length,i+batchSize));
    }
    results.sort((a,b)=>b.score-a.score);
    setCountryRecs(results.slice(0,10));
@@ -104,13 +118,18 @@ function App(){
 
      <section className="mb-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
        <div className="mb-4 flex items-center gap-2"><SlidersHorizontal size={18}/><h2 className="font-semibold">Was möchtest du berücksichtigen?</h2></div>
+       <div className="mb-4">
+         <span className="text-sm font-medium">Urlaubskategorie <span className="font-normal text-slate-400">(mehrere möglich, leer = alle Länder)</span></span>
+         <div className="mt-2 flex flex-wrap gap-2">{CATEGORIES.map(c=>{const on=categories.includes(c.code);return <button key={c.code} type="button" title={c.description} onClick={()=>setCategories(on?categories.filter(x=>x!==c.code):[...categories,c.code])} className={`focus-ring rounded-full border px-3 py-1.5 text-xs font-medium transition ${on?'border-slate-900 bg-slate-900 text-white':'border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}>{c.label}</button>})}</div>
+         {categories.length>1&&<p className="mt-1.5 text-[11px] text-slate-500">Nur Länder, die <b>alle</b> gewählten Kategorien erfüllen, werden berücksichtigt – z. B. liefert „Ski“ + „Strand & Sonne“ kaum bis keine Treffer.</p>}
+       </div>
        <div className="grid gap-3 lg:grid-cols-[1fr_1fr_1fr]">
          <Factor label="Schulferien Deutschland" on={germanOn} setOn={setGermanOn}><Multi label="Bundesländer" values={DE_STATES} selected={deStates} onChange={setDeStates}/></Factor>
          <Factor label="Schulferien Schweiz" on={swissOn} setOn={setSwissOn}><Multi label="Kantone · leer = ganze Schweiz" values={CH_CANTONS.map((c,i)=>`${c}|${CH_NAMES[i]}`)} selected={chCantons} onChange={setChCantons} display/></Factor>
          <Factor label="Weitere Reisemärkte (weltweit)" on={otherOn} setOn={setOtherOn}><Multi label="Länder" values={COUNTRIES.map(c=>c.code)} selected={countries} onChange={(v)=>setCountries(v as CountryCode[])} displayCountry/></Factor>
        </div>
        <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_1fr_1fr]">
-         <label className="rounded-xl border border-slate-200 p-3"><span className="text-sm font-medium">Reiseziel</span><select value={destination} onChange={e=>{setDestination(e.target.value);setCountryRecs([])}} className="focus-ring mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"><option value="">🌍 Alle Länder (Empfehlung)</option>{CONTINENTS.map(cont=><optgroup key={cont} label={cont}>{DESTINATIONS.filter(d=>d.continent===cont).map(d=><option key={d.code} value={d.code}>{d.name}</option>)}</optgroup>)}</select><Check on={weatherOn} setOn={setWeatherOn}/><p className="mt-1 text-[11px] text-slate-500">Klima wird pro Reiseziel geladen (Referenzkoordinate). Ohne festes Ziel: Länder-Empfehlung unten.</p></label>
+         <label className="rounded-xl border border-slate-200 p-3"><span className="text-sm font-medium">Reiseziel</span><select value={destination} onChange={e=>{setDestination(e.target.value);setCountryRecs([])}} className="focus-ring mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"><option value="">🌍 Alle Länder (Empfehlung)</option>{CONTINENTS.map(cont=>{const opts=eligibleDestinations.filter(d=>d.continent===cont);return opts.length?<optgroup key={cont} label={cont}>{opts.map(d=><option key={d.code} value={d.code}>{d.name}</option>)}</optgroup>:null})}</select><Check on={weatherOn} setOn={setWeatherOn}/><p className="mt-1 text-[11px] text-slate-500">Klima wird pro Reiseziel geladen (Referenzkoordinate). Ohne festes Ziel: Länder-Empfehlung unten.</p></label>
          <Factor label="Feiertage & Brückentage" on={holidaysOn} setOn={setHolidaysOn}/>
          <div className="rounded-xl border border-slate-200 p-3"><div className="flex items-center justify-between"><span className="text-sm font-medium">Was ist dir wichtiger?</span><span className="text-xs font-semibold text-slate-500">{peopleWeight}% Menschen · {100-peopleWeight}% Wetter</span></div><input aria-label="Gewichtung Menschen gegen Wetter" type="range" min="0" max="100" value={peopleWeight} onChange={e=>setPeopleWeight(+e.target.value)} className="mt-4 w-full"/><div className="mt-1 flex justify-between text-xs text-slate-500"><span>Wenig Menschen</span><span>Gutes Wetter</span></div></div>
        </div>
@@ -120,15 +139,16 @@ function App(){
      {isRecommendMode?
        <section className="mb-5 rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-5">
          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-           <div><h2 className="font-semibold">Top 10 Länder-Empfehlungen</h2><p className="text-xs text-slate-500">Berechnet für {DESTINATIONS.length} Länder den besten Zeitraum nach deinen Filtern.</p></div>
+           <div><h2 className="font-semibold">Top 10 Länder-Empfehlungen</h2><p className="text-xs text-slate-500">Berechnet für {eligibleDestinations.length} Länder{categories.length?` (Kategorie: ${categories.map(c=>CATEGORIES.find(x=>x.code===c)?.label).join(' + ')})`:''} den besten Zeitraum nach deinen Filtern.</p></div>
            <div className="flex items-center gap-2">
              <DurationSelect duration={duration} setDuration={setDuration}/>
              <WeekdaySelect startWeekday={startWeekday} setStartWeekday={setStartWeekday}/>
-             <button onClick={computeCountryRecommendations} disabled={recsLoading} className="focus-ring rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{recsLoading?`Lädt … ${recsProgress}/${DESTINATIONS.length}`:'Berechnen'}</button>
+             <button onClick={computeCountryRecommendations} disabled={recsLoading||eligibleDestinations.length===0} className="focus-ring rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">{recsLoading?`Lädt … ${recsProgress}/${eligibleDestinations.length}`:'Berechnen'}</button>
            </div>
          </div>
+         {eligibleDestinations.length===0&&<p className="text-sm text-amber-700">Keine Länder erfüllen alle gewählten Kategorien gleichzeitig.</p>}
          {countryRecs.length>0&&<div className="grid gap-2 sm:grid-cols-2">{countryRecs.map((r,i)=><button key={r.destination.code} onClick={()=>{setDestination(r.destination.code);setSelectedDate(r.start);setRange(r.dates)}} className="focus-ring rounded-xl border border-slate-200 p-3 text-left hover:bg-slate-50"><div className="flex items-center justify-between"><span className="text-sm font-medium">{i+1}. {r.destination.name}</span><b className="text-sm">{Math.round(r.score)}/100</b></div><div className="mt-1 text-xs text-slate-500">{shortRange(r.start,r.end)}</div></button>)}</div>}
-         {!recsLoading&&countryRecs.length===0&&<p className="text-sm text-slate-500">Klicke „Berechnen“, um alle Länder anhand deiner aktuellen Filter zu vergleichen.</p>}
+         {!recsLoading&&countryRecs.length===0&&eligibleDestinations.length>0&&<p className="text-sm text-slate-500">Klicke „Berechnen“, um alle passenden Länder anhand deiner aktuellen Filter zu vergleichen.</p>}
        </section>
      :
      <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_330px]">
