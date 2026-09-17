@@ -59,7 +59,6 @@ function App(){
  const dateList=React.useMemo(()=>{const out:string[]=[]; for(let m=0;m<12;m++)for(let d=1;d<=daysInMonth(year,m);d++)out.push(iso(year,m,d)); return out},[year]);
  const bestRanges=React.useMemo(()=>findBestRanges(dateList,duration,scoreFor),[dateList,duration,peopleWeight,climate,holidayData,deStates,chCantons,countries,germanOn,swissOn,otherOn,weatherOn,holidaysOn]);
  const selected=scoreFor(selectedDate);
- const toggle=(arr:string[],v:string,set:(v:string[])=>void)=>set(arr.includes(v)?arr.filter(x=>x!==v):[...arr,v]);
 
  return <main className="min-h-screen bg-slate-50 text-slate-900">
    <div className="mx-auto max-w-[1500px] px-3 py-4 sm:px-6 sm:py-7">
@@ -73,7 +72,7 @@ function App(){
        <div className="grid gap-3 lg:grid-cols-[1fr_1fr_1fr]">
          <Factor label="Schulferien Deutschland" on={germanOn} setOn={setGermanOn}><Multi label="Bundesländer" values={DE_STATES} selected={deStates} onChange={setDeStates}/></Factor>
          <Factor label="Schulferien Schweiz" on={swissOn} setOn={setSwissOn}><Multi label="Kantone · leer = ganze Schweiz" values={CH_CANTONS.map((c,i)=>`${c}|${CH_NAMES[i]}`)} selected={chCantons} onChange={setChCantons} display/></Factor>
-         <Factor label="Schulferien andere Länder" on={otherOn} setOn={setOtherOn}><Multi label="Länder" values={COUNTRIES.map(c=>c.code)} selected={countries} onChange={setCountries} displayCountry/></Factor>
+         <Factor label="Schulferien andere Länder" on={otherOn} setOn={setOtherOn}><Multi label="Länder" values={COUNTRIES.map(c=>c.code)} selected={countries} onChange={(v)=>setCountries(v as CountryCode[])} displayCountry/></Factor>
        </div>
        <div className="mt-4 grid gap-3 lg:grid-cols-[1fr_1fr_1fr]">
          <label className="rounded-xl border border-slate-200 p-3"><span className="text-sm font-medium">Wetter / Klima</span><select value={continent} onChange={e=>setContinent(e.target.value)} disabled={!weatherOn} className="focus-ring mt-2 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"><option>Europa</option><option>Asien</option><option>Afrika</option><option>Nordamerika</option><option>Südamerika</option><option>Ozeanien</option></select><Check on={weatherOn} setOn={setWeatherOn}/></label>
